@@ -1,2 +1,2 @@
 # Simple Shell
---Author: Aysanew Yonas | May 6 2022
+--Author: Odebamike Zion | May 6 2022
