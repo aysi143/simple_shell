@@ -1,2 +1,1 @@
-# Simple Shell
---Author: Aysanew Yonas | May 6 2022
+0x16. C - Simple Shell

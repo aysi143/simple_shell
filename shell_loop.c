@@ -1,77 +1,160 @@
-#include "main.h"
+#include "shell.h"
 
 /**
- * without_comment - deletes comments from the input
+ * hsh - main shell loop
+ * @info: the parameter & return info struct
+ * @av: the argument vector from main()
  *
- * @in: input string
- * Return: input without comments
+ * Return: 0 on success, 1 on error, or error code
  */
-char *without_comment(char *in)
+int hsh(info_t *info, char **av)
 {
-	int i, up_to;
+	ssize_t r = 0;
+	int builtin_ret = 0;
 
-	up_to = 0;
-	for (i = 0; in[i]; i++)
+	while (r != -1 && builtin_ret != -2)
 	{
-		if (in[i] == '#')
+		clear_info(info);
+		if (interactive(info))
+			_puts("$ ");
+		_eputchar(BUF_FLUSH);
+		r = get_input(info);
+		if (r != -1)
 		{
-			if (i == 0)
-			{
-				free(in);
-				return (NULL);
-			}
-
-			if (in[i - 1] == ' ' || in[i - 1] == '\t' || in[i - 1] == ';')
-				up_to = i;
+			set_info(info, av);
+			builtin_ret = find_builtin(info);
+			if (builtin_ret == -1)
+				find_cmd(info);
 		}
+		else if (interactive(info))
+			_putchar('\n');
+		free_info(info, 0);
 	}
-
-	if (up_to != 0)
+	write_history(info);
+	free_info(info, 1);
+	if (!interactive(info) && info->status)
+		exit(info->status);
+	if (builtin_ret == -2)
 	{
-		in = _realloc(in, i, up_to + 1);
-		in[up_to] = '\0';
+		if (info->err_num == -1)
+			exit(info->status);
+		exit(info->err_num);
 	}
-
-	return (in);
+	return (builtin_ret);
 }
 
 /**
- * shell_loop - Loop of shell
- * @datash: data relevant (av, input, args)
+ * find_builtin - finds a builtin command
+ * @info: the parameter & return info struct
  *
- * Return: no return.
+ * Return: -1 if builtin not found,
+ *			0 if builtin executed successfully,
+ *			1 if builtin found but not successful,
+ *			-2 if builtin signals exit()
  */
-void shell_loop(data_shell *datash)
+int find_builtin(info_t *info)
 {
-	int loop, i_eof;
-	char *input;
+	int i, built_in_ret = -1;
+	builtin_table builtintbl[] = {
+		{"exit", _myexit},
+		{"env", _myenv},
+		{"help", _myhelp},
+		{"history", _myhistory},
+		{"setenv", _mysetenv},
+		{"unsetenv", _myunsetenv},
+		{"cd", _mycd},
+		{"alias", _myalias},
+		{NULL, NULL}
+	};
 
-	loop = 1;
-	while (loop == 1)
-	{
-		write(STDIN_FILENO, "^-^ ", 4);
-		input = read_line(&i_eof);
-		if (i_eof != -1)
+	for (i = 0; builtintbl[i].type; i++)
+		if (_strcmp(info->argv[0], builtintbl[i].type) == 0)
 		{
-			input = without_comment(input);
-			if (input == NULL)
-				continue;
-
-			if (check_syntax_error(datash, input) == 1)
-			{
-				datash->status = 2;
-				free(input);
-				continue;
-			}
-			input = rep_var(input, datash);
-			loop = split_commands(datash, input);
-			datash->counter += 1;
-			free(input);
+			info->line_count++;
+			built_in_ret = builtintbl[i].func(info);
+			break;
 		}
-		else
+	return (built_in_ret);
+}
+
+/**
+ * find_cmd - finds a command in PATH
+ * @info: the parameter & return info struct
+ *
+ * Return: void
+ */
+void find_cmd(info_t *info)
+{
+	char *path = NULL;
+	int i, k;
+
+	info->path = info->argv[0];
+	if (info->linecount_flag == 1)
+	{
+		info->line_count++;
+		info->linecount_flag = 0;
+	}
+	for (i = 0, k = 0; info->arg[i]; i++)
+		if (!is_delim(info->arg[i], " \t\n"))
+			k++;
+	if (!k)
+		return;
+
+	path = find_path(info, _getenv(info, "PATH="), info->argv[0]);
+	if (path)
+	{
+		info->path = path;
+		fork_cmd(info);
+	}
+	else
+	{
+		if ((interactive(info) || _getenv(info, "PATH=")
+			|| info->argv[0][0] == '/') && is_cmd(info, info->argv[0]))
+			fork_cmd(info);
+		else if (*(info->arg) != '\n')
 		{
-			loop = 0;
-			free(input);
+			info->status = 127;
+			print_error(info, "not found\n");
+		}
+	}
+}
+
+/**
+ * fork_cmd - forks a an exec thread to run cmd
+ * @info: the parameter & return info struct
+ *
+ * Return: void
+ */
+void fork_cmd(info_t *info)
+{
+	pid_t child_pid;
+
+	child_pid = fork();
+	if (child_pid == -1)
+	{
+		/* TODO: PUT ERROR FUNCTION */
+		perror("Error:");
+		return;
+	}
+	if (child_pid == 0)
+	{
+		if (execve(info->path, info->argv, get_environ(info)) == -1)
+		{
+			free_info(info, 1);
+			if (errno == EACCES)
+				exit(126);
+			exit(1);
+		}
+		/* TODO: PUT ERROR FUNCTION */
+	}
+	else
+	{
+		wait(&(info->status));
+		if (WIFEXITED(info->status))
+		{
+			info->status = WEXITSTATUS(info->status);
+			if (info->status == 126)
+				print_error(info, "Permission denied\n");
 		}
 	}
 }
